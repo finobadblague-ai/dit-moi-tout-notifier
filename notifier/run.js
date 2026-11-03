@@ -1,10 +1,13 @@
 /* Programme de notification de Dis-moi tout, lancé toutes les 30 minutes par GitHub Actions (voir .github/workflows/notify.yml).
    1. Il crée les questions pour tout le monde quand leur moment est venu (même si personne n'ouvre l'appli).
-   2. Il prévient chaque joueur (notification du téléphone et/ou mail) : nouvelle question, réponse reçue, question pour tout le monde.
-   La nuit (22 h à 8 h, heure de Paris), il ne fait rien : tout ce qui s'est passé est envoyé le matin. */
+   2. Il calcule le tableau des affinités (lui seul peut lire les choix secrets des questions à choix).
+   3. Il prévient chaque joueur (notification du téléphone et/ou mail) : nouvelle question, réponse reçue, question pour tout le monde,
+      et un rappel par jour au plus quand une question l'attend depuis plus de 24 heures.
+   La nuit (22 h à 8 h, heure de Paris), il ne fait que le tableau : les messages sont envoyés le matin. */
 'use strict';
 const L = require('./logic');
 const THEMES = require('./questions');
+const CHOICES = require('./choices');
 
 const QUIET_FROM = 22, QUIET_TO = 8, TZ = 'Europe/Paris';
 function hourIn(now, tz) { return +new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(new Date(now)); }
@@ -26,29 +29,74 @@ async function ensureCollective(db, code, g, now) {
   });
 }
 
+/* Tout ce qu'il faut savoir d'une partie, lu une fois par passage. */
+async function loadGame(gref) {
+  const [ch, qs, cs, pv] = await Promise.all([gref.collection('choices').get(), gref.collection('questions').get(), gref.collection('collective').get(), gref.collection('private').get()]);
+  const picks = {}; ch.docs.forEach(d => { picks[d.id] = d.data().picks || {}; });
+  const priv = {}; pv.docs.forEach(d => { priv[d.id] = (d.data().coll) || {}; });
+  const questions = qs.docs.map(x => Object.assign({ id: x.id, ref: x.ref }, x.data()));
+  const collectives = [], answers = [];
+  for (const c of cs.docs) {
+    const x = Object.assign({ id: c.id }, c.data(), { answers: {}, priv: {} });
+    (await c.ref.collection('answers').get()).docs.forEach(a => { x.answers[a.id] = a.data(); answers.push({ cid: c.id, pid: a.id, removed: !!a.data().removed }); });
+    const v = await gref.collection('cviewer').doc(c.id).get(); x.viewer = v.exists ? v.data().viewer : null;
+    Object.keys(priv).forEach(p => { if (priv[p][c.id]) x.priv[p] = priv[p][c.id]; });
+    collectives.push(x);
+  }
+  return { picks, questions, collectives, answers };
+}
+
+/* Tableau des affinités d'une partie : games/{code}/stats/compat = { pairs, at } */
+async function updateStats(gref, g, now, data) {
+  const D = data || await loadGame(gref);
+  const pairs = L.compat(g, D.picks, D.questions, D.answers, CHOICES);
+  await gref.collection('stats').doc('compat').set({ pairs, at: now });
+  return pairs;
+}
+
+const REMIND_AFTER = L.DAY, NEW_WINDOW = 3 * L.DAY;
+
 async function run(d) {
   const now = d.now, stRef = d.db.collection('notifier').doc('state'), st = await stRef.get();
   const since = (st.exists && st.data().last) || now - 40 * 60000;
-  if ((d.quiet || quiet)(now)) return { quiet: true };
-  const out = [], games = await d.db.collection('games').get();
+  const isQuiet = (d.quiet || quiet)(now), out = [];
+  const games = await d.db.collection('games').get();
   for (const doc of games.docs) {
     const code = doc.id, g = doc.data(), gref = doc.ref;
     try {
+      if ((g.pids || []).length < 2) continue;
+      let D = await loadGame(gref);
+      await updateStats(gref, g, now, D);
+      if (isQuiet) continue;
       const created = await ensureCollective(d.db, code, g, now);
-      if (created) out.push({ code, created });
-      const [qs, qa, cs] = await Promise.all([
-        gref.collection('questions').where('at', '>', since).get(),
-        gref.collection('questions').where('answeredAt', '>', since).get(),
-        gref.collection('collective').where('at', '>', since).get()
-      ]);
-      const ev = L.events(g, qs.docs.concat(qa.docs).map(x => x.data()), cs.docs.map(x => x.data()), since);
+      if (created) { out.push({ code, created }); D = await loadGame(gref); }
+      const ev = {}, add = (pid, kind) => { if (pid && (g.pids || []).includes(pid)) (ev[pid] = ev[pid] || {})[kind] = true; };
+      const marks = [];
+      /* Nouvelle question pour un joueur : chaque question est signalée une fois (repère notifiedAt sur la question). */
+      D.questions.forEach(q => {
+        if (q.status === 'pending' && !q.notifiedAt && q.at > now - NEW_WINDOW) { add(q.to, 'question'); marks.push([q.ref, { notifiedAt: now }]); }
+        if (q.status === 'answered' && q.answeredAt && q.answeredAt > (q.answerNotifiedAt || 0) && q.answeredAt > now - NEW_WINDOW) { add(q.from, 'answer'); marks.push([q.ref, { answerNotifiedAt: now }]); }
+      });
+      /* Question pour tout le monde arrivée depuis le dernier passage. */
+      D.collectives.forEach(c => { if (c.at > since) (g.pids || []).forEach(p => { if (p !== c.by) add(p, 'collective'); }); });
+      /* Rappel, au plus une fois par jour, quand une question attend depuis plus de 24 heures. */
+      const rRef = d.db.collection('notifier').doc('remind_' + code), rs = await rRef.get(), last = rs.exists ? rs.data() : {}, upd = {};
+      const waiting = L.waitingSince(g, D.questions, D.collectives, now);
+      Object.keys(waiting).forEach(pid => {
+        if (now - waiting[pid] < REMIND_AFTER || now - (last[pid] || 0) < REMIND_AFTER) return;
+        if (!ev[pid]) add(pid, 'remind');
+        upd[pid] = now;
+      });
       for (const pid of Object.keys(ev)) {
         const msg = L.message(ev[pid]); if (!msg) continue;
         const sent = await d.send(code, pid, msg);
         out.push({ code, pid, kinds: Object.keys(ev[pid]), sent });
       }
+      for (const [ref, m] of marks) await ref.update(m);
+      if (Object.keys(upd).length) await rRef.set(upd, { merge: true });
     } catch (e) { console.error('partie', code, e.message); }
   }
+  if (isQuiet) return { quiet: true };
   await stRef.set({ last: now });
   return out;
 }
@@ -100,5 +148,5 @@ async function main() {
   console.log(new Date().toISOString(), JSON.stringify(r));
 }
 
-module.exports = { run, quiet, hourIn, ensureCollective, vapidKeys };
+module.exports = { run, quiet, hourIn, ensureCollective, vapidKeys, updateStats, loadGame };
 if (require.main === module) main().then(() => process.exit(0), (e) => { console.error(e); process.exit(1); });

@@ -75,6 +75,7 @@
     question: 'Une nouvelle question t’attend.',
     answer: 'Quelqu’un a répondu à ta question.',
     collective: 'Une question pour tout le monde vient d’arriver.',
+    remind: 'Des questions t’attendent toujours dans la partie.',
     many: 'Du nouveau t’attend dans la partie.'
   };
   function message(kinds, gameName) {
@@ -83,10 +84,60 @@
     return { title: 'Dis-moi tout' + (gameName ? ' · ' + gameName : ''), body: ks.length > 1 ? TEXTS.many : TEXTS[ks[0]] };
   }
 
+  /* Rappels : pour chaque joueur, depuis quand la plus ancienne question l'attend (questions pour lui encore sans réponse,
+     questions pour tout le monde auxquelles il n'a ni répondu, ni refusé, ni gardé pour plus tard, des 14 derniers jours). */
+  function waitingSince(game, questions, collectives, now) {
+    var out = {}, from = now - 14 * DAY, pids = game.pids || [];
+    var put = function (pid, at) { if (pids.indexOf(pid) >= 0 && at >= from && (!out[pid] || at < out[pid])) out[pid] = at; };
+    (questions || []).forEach(function (q) { if (q.status === 'pending' || q.status === 'retire') put(q.to, q.at); });
+    (collectives || []).forEach(function (c) {
+      pids.forEach(function (p) {
+        if (p === c.by || c.viewer === p) return;
+        var a = (c.answers || {})[p], st = (c.priv || {})[p];
+        if ((a && !a.removed) || st === 'refused' || st === 'later') return;
+        put(p, c.at);
+      });
+    });
+    return out;
+  }
+
+  /* Affinités entre chaque paire de joueurs (calculées par le programme de notification, qui seul voit les choix secrets).
+     ami / amour : % de choix identiques aux questions à choix (amour : thèmes amoureux seulement), à partir de 3 questions en commun.
+     compl : complicité de 0 à 100, d'après les échanges entre les deux (questions posées, réponses, questions pour tout le monde). */
+  var MIN_COMMON = 3;
+  function pairKey(a, b) { return a < b ? a + '__' + b : b + '__' + a; }
+  function compat(game, picks, questions, collAnswers, CH) {
+    var pids = (game.pids || []).slice(), out = {}, theme = {}, love = {};
+    ((CH && CH.list) || []).forEach(function (c) { theme[c.id] = c.theme; });
+    ((CH && CH.LOVE) || []).forEach(function (t) { love[t] = 1; });
+    var pts = {}, add = function (a, b, n) { if (!a || !b || a === b) return; var k = pairKey(a, b); pts[k] = (pts[k] || 0) + n; };
+    (questions || []).forEach(function (q) { add(q.from, q.to, 1); if (q.status === 'answered') add(q.from, q.to, 2); });
+    var byC = {};
+    (collAnswers || []).forEach(function (a) { if (!a.removed) (byC[a.cid] = byC[a.cid] || []).push(a.pid); });
+    Object.keys(byC).forEach(function (c) { var l = byC[c]; for (var i = 0; i < l.length; i++) for (var j = i + 1; j < l.length; j++) add(l[i], l[j], 1); });
+    for (var i = 0; i < pids.length; i++) for (var j = i + 1; j < pids.length; j++) {
+      var a = pids[i], b = pids[j], pa = (picks || {})[a] || {}, pb = (picks || {})[b] || {};
+      var n = 0, same = 0, ln = 0, lsame = 0;
+      Object.keys(pa).forEach(function (cid) {
+        if (!(cid in pb) || !(cid in theme) || pa[cid] < 0 || pb[cid] < 0) return;
+        n++; if (pa[cid] === pb[cid]) same++;
+        if (love[theme[cid]]) { ln++; if (pa[cid] === pb[cid]) lsame++; }
+      });
+      var k = pairKey(a, b);
+      out[k] = {
+        ami: n >= MIN_COMMON ? Math.round(100 * same / n) : null, amiN: n,
+        amour: ln >= MIN_COMMON ? Math.round(100 * lsame / ln) : null, amourN: ln,
+        compl: Math.round(100 * (1 - Math.exp(-(pts[k] || 0) / 20)))
+      };
+    }
+    return out;
+  }
+
   var L = {
     DAY: DAY, LEVELS: LEVELS, ADULT: ADULT, newCode: newCode, newId: newId, randInt: randInt, seeded: seeded,
     slots: slots, dueSlot: dueSlot, nextSlot: nextSlot, collectiveLevel: collectiveLevel, pickQuestion: pickQuestion, byId: byId,
-    makeCollective: makeCollective, canCollective: canCollective, events: events, message: message, TEXTS: TEXTS
+    makeCollective: makeCollective, canCollective: canCollective, events: events, message: message, TEXTS: TEXTS,
+    compat: compat, pairKey: pairKey, MIN_COMMON: MIN_COMMON, waitingSince: waitingSince
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = L; else root.DMT = L;
 })(this);
