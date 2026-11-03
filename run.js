@@ -1,6 +1,6 @@
 /* Programme de notification de Dis-moi tout, lancé toutes les 30 minutes par GitHub Actions (voir .github/workflows/notify.yml).
    1. Il crée les questions pour tout le monde quand leur moment est venu (même si personne n'ouvre l'appli).
-   2. Il calcule le tableau des affinités (lui seul peut lire les choix secrets des questions à choix).
+   2. Il calcule le tableau des affinités et les points (lui seul peut lire les choix secrets des questions à choix).
    3. Il prévient chaque joueur (notification du téléphone et/ou mail) : nouvelle question, réponse reçue, question pour tout le monde,
       et un rappel par jour au plus quand une question l'attend depuis plus de 24 heures.
    La nuit (22 h à 8 h, heure de Paris), il ne fait que le tableau : les messages sont envoyés le matin. */
@@ -46,11 +46,12 @@ async function loadGame(gref) {
   return { picks, questions, collectives, answers };
 }
 
-/* Tableau des affinités d'une partie : games/{code}/stats/compat = { pairs, at } */
+/* Tableau des affinités et points d'une partie : games/{code}/stats/compat = { pairs, points, at } */
 async function updateStats(gref, g, now, data) {
   const D = data || await loadGame(gref);
   const pairs = L.compat(g, D.picks, D.questions, D.answers, CHOICES);
-  await gref.collection('stats').doc('compat').set({ pairs, at: now });
+  const points = L.points(g, D.picks, D.questions, D.answers, now);
+  await gref.collection('stats').doc('compat').set({ pairs, points, at: now });
   return pairs;
 }
 

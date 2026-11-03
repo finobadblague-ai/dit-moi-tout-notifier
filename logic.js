@@ -133,11 +133,28 @@
     return out;
   }
 
+  /* Points de chaque joueur : +10 par réponse à une question personnelle, +5 par réponse à une question pour tout le monde,
+     +1 par question à choix ; -5 pour une question personnelle restée plus de 7 jours sans réponse (ou répondue après 7 jours).
+     Jamais en dessous de 0. Refuser une question ne rapporte rien et ne fait rien perdre. */
+  var POINTS = { answer: 10, coll: 5, pick: 1, late: 5, lateAfter: 7 * DAY };
+  function points(game, picks, questions, collAnswers, now) {
+    var out = {}; (game.pids || []).forEach(function (p) { out[p] = 0; });
+    var add = function (p, n) { if (p in out) out[p] += n; };
+    (questions || []).forEach(function (q) {
+      if (q.status === 'answered') { add(q.to, POINTS.answer); if (q.answeredAt && q.at && q.answeredAt - q.at > POINTS.lateAfter) add(q.to, -POINTS.late); }
+      else if ((q.status === 'pending' || q.status === 'later' || q.status === 'retire') && q.at && now - q.at > POINTS.lateAfter) add(q.to, -POINTS.late);
+    });
+    (collAnswers || []).forEach(function (a) { if (!a.removed) add(a.pid, POINTS.coll); });
+    Object.keys(picks || {}).forEach(function (p) { var pk = picks[p] || {}; Object.keys(pk).forEach(function (c) { if (pk[c] >= 0) add(p, POINTS.pick); }); });
+    Object.keys(out).forEach(function (p) { if (out[p] < 0) out[p] = 0; });
+    return out;
+  }
+
   var L = {
     DAY: DAY, LEVELS: LEVELS, ADULT: ADULT, newCode: newCode, newId: newId, randInt: randInt, seeded: seeded,
     slots: slots, dueSlot: dueSlot, nextSlot: nextSlot, collectiveLevel: collectiveLevel, pickQuestion: pickQuestion, byId: byId,
     makeCollective: makeCollective, canCollective: canCollective, events: events, message: message, TEXTS: TEXTS,
-    compat: compat, pairKey: pairKey, MIN_COMMON: MIN_COMMON, waitingSince: waitingSince
+    compat: compat, pairKey: pairKey, MIN_COMMON: MIN_COMMON, waitingSince: waitingSince, points: points, POINTS: POINTS
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = L; else root.DMT = L;
 })(this);
