@@ -1,7 +1,7 @@
 /* Programme de notification de Dis-moi tout, lancé toutes les 30 minutes par GitHub Actions (voir .github/workflows/notify.yml).
    1. Il crée les questions pour tout le monde quand leur moment est venu (même si personne n'ouvre l'appli).
    2. Il calcule le tableau des affinités et les points (lui seul peut lire les choix secrets des questions à choix).
-   3. Il prévient chaque joueur (notification du téléphone et/ou mail) : nouvelle question, réponse reçue, question pour tout le monde,
+   3. Il prévient chaque joueur (notification du téléphone et/ou mail) : nouvelle question, réponse reçue, commentaire, question pour tout le monde,
       et un rappel par jour au plus quand une question l'attend depuis plus de 24 heures.
    La nuit (22 h à 8 h, heure de Paris), il ne fait que le tableau : les messages sont envoyés le matin. */
 'use strict';
@@ -77,6 +77,8 @@ async function run(d) {
       D.questions.forEach(q => {
         if (q.status === 'pending' && !q.notifiedAt && q.at > now - NEW_WINDOW) { add(q.to, 'question'); marks.push([q.ref, { notifiedAt: now }]); }
         if (q.status === 'answered' && q.answeredAt && q.answeredAt > (q.answerNotifiedAt || 0) && q.answeredAt > now - NEW_WINDOW) { add(q.from, 'answer'); marks.push([q.ref, { answerNotifiedAt: now }]); }
+        /* Commentaire laissé sur une réponse : on prévient celui qui a répondu. */
+        if (q.status === 'answered' && q.comment && q.comment.at > (q.commentNotifiedAt || 0) && q.comment.at > now - NEW_WINDOW) { add(q.to, 'comment'); marks.push([q.ref, { commentNotifiedAt: now }]); }
       });
       /* Question pour tout le monde arrivée depuis le dernier passage. */
       D.collectives.forEach(c => { if (c.at > since) (g.pids || []).forEach(p => { if (p !== c.by) add(p, 'collective'); }); });

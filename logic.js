@@ -76,6 +76,7 @@
     answer: 'Quelqu’un a répondu à ta question.',
     collective: 'Une question pour tout le monde vient d’arriver.',
     remind: 'Des questions t’attendent toujours dans la partie.',
+    comment: 'Quelqu’un a commenté ta réponse.',
     many: 'Du nouveau t’attend dans la partie.'
   };
   function message(kinds, gameName) {
@@ -85,14 +86,14 @@
   }
 
   /* Rappels : pour chaque joueur, depuis quand la plus ancienne question l'attend (questions pour lui encore sans réponse,
-     questions pour tout le monde auxquelles il n'a ni répondu, ni refusé, ni gardé pour plus tard, des 14 derniers jours). */
+     questions pour tout le monde auxquelles il n'a ni répondu, ni refusé, ni gardé pour plus tard), tant que le délai de 7 jours n'est pas passé. */
   function waitingSince(game, questions, collectives, now) {
-    var out = {}, from = now - 14 * DAY, pids = game.pids || [];
+    var out = {}, from = now - POINTS.lateAfter, pids = game.pids || [];
     var put = function (pid, at) { if (pids.indexOf(pid) >= 0 && at >= from && (!out[pid] || at < out[pid])) out[pid] = at; };
     (questions || []).forEach(function (q) { if (q.status === 'pending' || q.status === 'retire') put(q.to, q.at); });
     (collectives || []).forEach(function (c) {
       pids.forEach(function (p) {
-        if (p === c.by || c.viewer === p) return;
+        if (c.viewer === p) return;
         var a = (c.answers || {})[p], st = (c.priv || {})[p];
         if ((a && !a.removed) || st === 'refused' || st === 'later') return;
         put(p, c.at);
@@ -134,15 +135,19 @@
   }
 
   /* Points de chaque joueur : +10 par réponse à une question personnelle, +5 par réponse à une question pour tout le monde,
-     +1 par question à choix ; -5 pour une question personnelle restée plus de 7 jours sans réponse (ou répondue après 7 jours).
+     +1 par question à choix ; -5 pour une question personnelle restée plus de 7 jours sans réponse (fermée).
      Jamais en dessous de 0. Refuser une question ne rapporte rien et ne fait rien perdre. */
   var POINTS = { answer: 10, coll: 5, pick: 1, late: 5, lateAfter: 7 * DAY };
+  /* Délai de 7 jours : passé ce délai, une question sans réponse est fermée (« Trop tard, une autre fois »). */
+  function open(q) { return q.status === 'pending' || q.status === 'later' || q.status === 'retire'; }
+  function expired(q, now) { return open(q) && !!q.at && now - q.at > POINTS.lateAfter; }
+  function cExpired(c, now) { return !!c.at && now - c.at > POINTS.lateAfter; }
   function points(game, picks, questions, collAnswers, now) {
     var out = {}; (game.pids || []).forEach(function (p) { out[p] = 0; });
     var add = function (p, n) { if (p in out) out[p] += n; };
     (questions || []).forEach(function (q) {
       if (q.status === 'answered') { add(q.to, POINTS.answer); if (q.answeredAt && q.at && q.answeredAt - q.at > POINTS.lateAfter) add(q.to, -POINTS.late); }
-      else if ((q.status === 'pending' || q.status === 'later' || q.status === 'retire') && q.at && now - q.at > POINTS.lateAfter) add(q.to, -POINTS.late);
+      else if (expired(q, now) && !(q.status === 'retire' && q.answeredAt)) add(q.to, -POINTS.late);
     });
     (collAnswers || []).forEach(function (a) { if (!a.removed) add(a.pid, POINTS.coll); });
     Object.keys(picks || {}).forEach(function (p) { var pk = picks[p] || {}; Object.keys(pk).forEach(function (c) { if (pk[c] >= 0) add(p, POINTS.pick); }); });
@@ -154,7 +159,7 @@
     DAY: DAY, LEVELS: LEVELS, ADULT: ADULT, newCode: newCode, newId: newId, randInt: randInt, seeded: seeded,
     slots: slots, dueSlot: dueSlot, nextSlot: nextSlot, collectiveLevel: collectiveLevel, pickQuestion: pickQuestion, byId: byId,
     makeCollective: makeCollective, canCollective: canCollective, events: events, message: message, TEXTS: TEXTS,
-    compat: compat, pairKey: pairKey, MIN_COMMON: MIN_COMMON, waitingSince: waitingSince, points: points, POINTS: POINTS
+    compat: compat, pairKey: pairKey, MIN_COMMON: MIN_COMMON, waitingSince: waitingSince, points: points, POINTS: POINTS, expired: expired, cExpired: cExpired
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = L; else root.DMT = L;
 })(this);
