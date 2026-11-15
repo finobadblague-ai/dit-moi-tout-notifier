@@ -37,6 +37,8 @@
   /* Profondeur des questions pour tout le monde : légères au début, puis de plus en plus variées. */
   function collectiveLevel(k, r) {
     if (k < 2) return 'leger';
+    /* de temps en temps, une question à laquelle on répond en photo */
+    if (r() < 0.15) return 'photo';
     if (k < 5) return r() < 0.5 ? 'leger' : 'intime';
     return LEVELS[Math.floor(r() * 3)];
   }

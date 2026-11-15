@@ -6,7 +6,8 @@
    La nuit (22 h à 8 h, heure de Paris), il ne fait que le tableau : les messages sont envoyés le matin. */
 'use strict';
 const L = require('./logic');
-const THEMES = require('./questions');
+/* Les questions : celles déposées à la racine du dépôt GitHub si elles y sont (plus simple à mettre à jour), sinon celles du dossier. */
+const THEMES = require(require('fs').existsSync(require('path').join(__dirname, '..', 'questions.js')) ? '../questions.js' : './questions');
 const CHOICES = require('./choices');
 
 const QUIET_FROM = 22, QUIET_TO = 8, TZ = 'Europe/Paris';
