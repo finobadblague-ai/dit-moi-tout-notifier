@@ -1,7 +1,7 @@
-name: Notifications Dis-moi tout
+name: Notifications La Scène secrète
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 concurrency:
   group: notifier
@@ -12,17 +12,19 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      # Les fichiers du programme envoyés à la racine du dépôt remplacent ceux du dossier notifier.
-      - run: for f in run.js logic.js choices.js; do if [ -f "$f" ]; then cp "$f" notifier/; fi; done
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: notifier/package.json
       - run: npm install --no-audit --no-fund
         working-directory: notifier
       - run: node run.js
         working-directory: notifier
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VAPID_PUBLIC: ${{ secrets.VAPID_PUBLIC }}
+          VAPID_PRIVATE: ${{ secrets.VAPID_PRIVATE }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           SITE_URL: ${{ secrets.SITE_URL }}
