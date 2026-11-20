@@ -80,6 +80,8 @@ async function run(d) {
         if (q.status === 'answered' && q.answeredAt && q.answeredAt > (q.answerNotifiedAt || 0) && q.answeredAt > now - NEW_WINDOW) { add(q.from, 'answer'); marks.push([q.ref, { answerNotifiedAt: now }]); }
         /* Commentaire laissé sur une réponse : on prévient celui qui a répondu. */
         if (q.status === 'answered' && q.comment && q.comment.at > (q.commentNotifiedAt || 0) && q.comment.at > now - NEW_WINDOW) { add(q.to, 'comment'); marks.push([q.ref, { commentNotifiedAt: now }]); }
+        /* Réponse à ce commentaire : on prévient celui qui a posé la question. */
+        if (q.status === 'answered' && q.comment && q.reply && q.reply.at > (q.replyNotifiedAt || 0) && q.reply.at > now - NEW_WINDOW) { add(q.from, 'reply'); marks.push([q.ref, { replyNotifiedAt: now }]); }
       });
       /* Question pour tout le monde arrivée depuis le dernier passage. */
       D.collectives.forEach(c => { if (c.at > since) (g.pids || []).forEach(p => { if (p !== c.by) add(p, 'collective'); }); });

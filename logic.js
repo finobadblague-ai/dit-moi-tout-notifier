@@ -79,6 +79,7 @@
     collective: 'Une question pour tout le monde vient d’arriver.',
     remind: 'Des questions t’attendent toujours dans la partie.',
     comment: 'Quelqu’un a commenté ta réponse.',
+    reply: 'Quelqu’un a répondu à ton commentaire.',
     many: 'Du nouveau t’attend dans la partie.'
   };
   function message(kinds, gameName) {
